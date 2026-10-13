@@ -1,0 +1,87 @@
+
+/* =========================================================================
+ * OPIS OGÓLNY PROGRAMU (ZAŁOŻENIA):
+ * Program służy do automatycznej obsługi i nauki do 6 przycisków analogowych 
+ * podłączonych do jednego pinu (A3). Główne założenia to:
+ * 1. Autolearning (Tryb nauki): Program nie wymaga wpisów na sztywno – sam 
+ *    zapamiętuje pierwszy odczyt dla każdego nowo wciśniętego przycisku.
+ * 2. Wysoka precyzja: Używa wąskiej tolerancji (5 jednostek ADC), co pozwala 
+ *    rozróżnić przyciski generujące bardzo bliskie sobie napięcia.
+ * 3. Brak blokowania (Non-blocking): Nie używa długich opóźnień (delay), 
+ *    dzięki czemu natychmiast reaguje na naciśnięcie i wypisuje dane w jednej linii.
+ * ========================================================================= */
+
+const int analogInputPin = A3; // Definicja stałej: numer pinu analogowego, do którego wpięto drabinkę rezystorową przycisków
+const int threshold = 50;      // Próg szumów: wartości ADC poniżej 50 są ignorowane (oznaczają brak wciśnięcia)
+const int tolerance = 5;       // Tolerancja: dopuszczalny margines wahań odczytu dla tego samego przycisku
+
+// Tworzymy tablicę przechowującą zapamiętane wartości ADC dla maksymalnie 6 przycisków
+int learnedValues[6] = {0, 0, 0, 0, 0, 0}; 
+int buttonCount = 0;                       // Zmienna zliczająca, ile unikalnych przycisków zostało już "nauczonych"
+
+bool wasPressed = false; // Flaga stanu (pamięta, czy przycisk jest aktualnie wciśnięty, zapobiega "pętleniu" tekstu)
+
+void setup() {
+  Serial.begin(9600); // Uruchomienie komunikacji szeregowej z prędkością 9600 bodów (baud)
+}
+
+void loop() {
+  // 1. Ciągły odczyt napięcia z pinu analogowego (zwraca liczbę z zakresu od 0 do 1023)
+  int sensorValue = analogRead(analogInputPin);
+
+  // 2. Sprawdzamy, czy użytkownik wcisnął cokolwiek (wartość musi przekraczać próg szumów)
+  if (sensorValue > threshold) {
+    
+    // Warunek sprawdzający, czy to nowe naciśnięcie (zapobiega wielokrotnemu odczytowi przytrzymania)
+    if (!wasPressed) { 
+      wasPressed = true; // Zmieniamy flagę na true, blokując kolejne odczyty do momentu puszczenia przycisku
+
+      // 3. Procedura rozpoznawania: sprawdzamy, czy ten przycisk jest już w pamięci
+      int foundButtonIndex = -1; // -1 oznacza domyślnie, że przycisk nie został jeszcze rozpoznany
+      
+      // Pętla sprawdzająca po kolei wszystkie dotychczas zapamiętane przyciski
+      for (int i = 0; i < buttonCount; i++) {
+        // Sprawdzamy, czy aktualny odczyt mieści się w tolerancji zapamiętanej wartości
+        if (abs(sensorValue - learnedValues[i]) <= tolerance) {
+          foundButtonIndex = i + 1; // Przypisujemy numer przycisku (indeks tablicy 0 staje się przyciskiem nr 1)
+          break; // Przerywamy pętlę, bo znaleźliśmy pasujący przycisk
+        }
+      }
+
+      String statusText = ""; // Zmienna tekstowa przechowująca informację [NOWY] lub [ZNANY]
+
+      // 4. Jeśli przycisk jest nieznany (-1) i nie przekroczyliśmy limitu 6 sztuk
+      if (foundButtonIndex == -1 && buttonCount < 6) {
+        buttonCount++;                             // Zwiększamy licznik zapamiętanych przycisków
+        learnedValues[buttonCount - 1] = sensorValue; // Zapisujemy surową wartość ADC w tablicy
+        foundButtonIndex = buttonCount;            // Przypisujemy mu kolejny numer porządkowy
+        statusText = "[NOWY]";                     // Oznaczamy w logach jako nowy
+      } 
+      // 5. Jeśli przycisk został pomyślnie rozpoznany w tablicy
+      else if (foundButtonIndex != -1) {
+        statusText = "[ZNANY]"; // Oznaczamy w logach jako znany
+      }
+
+      // 6. Finalne wysłanie danych na monitor szeregowy (tylko jeśli przycisk został poprawnie obsłużony)
+      if (foundButtonIndex != -1) {
+        // Konwersja surowej wartości ADC (0-1023) na rzeczywiste napięcie w woltach (0-5V)
+        float voltage = sensorValue * (5.0 / 1023.0);
+        
+        // Wypisanie wszystkich informacji w jednej, czytelnej linijce
+        Serial.print(statusText);
+        Serial.print(" Przycisk nr: ");
+        Serial.print(foundButtonIndex);
+        Serial.print("  |  Napiecie: ");
+        Serial.print(voltage, 3); // Wyświetlenie napięcia z dokładnością do 3 miejsc po przecinku
+        Serial.print(" V  |  ADC: ");
+        Serial.println(sensorValue); // Wyświetlenie surowej wartości i przejście do nowej linii
+      }
+      
+      delay(50); // Krótkie opóźnienie (50 ms) likwidujące drgania styków mechanicznych (debouncing)
+    }
+  } else {
+    // Gdy żaden przycisk nie jest wciśnięty (wartość spadła poniżej progu),
+    // resetujemy flagę `wasPressed` do stanu false, pozwalając na kolejne kliknięcie.
+    wasPressed = false;
+  }
+}
